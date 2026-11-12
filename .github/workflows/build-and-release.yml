@@ -34,13 +34,13 @@ jobs:
       - name: Make Gradlew Executable
         run: chmod +x gradlew
 
-      - name: Setup Test Keystore
+      - name: Setup Fresh Test Keystore
         run: |
-          echo "Setting up test keystore for signing..."
-          # Remove pre-existing keystore to avoid alias collision
-          rm -f my-upload-key.jks
+          echo "Setting up fresh test keystore for signing..."
+          KEYSTORE_PATH="${{ github.workspace }}/ci-upload-key.jks"
+          rm -f "$KEYSTORE_PATH" my-upload-key.jks
           keytool -genkeypair -v \
-            -keystore my-upload-key.jks \
+            -keystore "$KEYSTORE_PATH" \
             -alias upload \
             -keyalg RSA \
             -keysize 2048 \
@@ -48,10 +48,11 @@ jobs:
             -storepass testpassword123 \
             -keypass testpassword123 \
             -dname "CN=Suman Jorwal, OU=Mobile, O=SumanJorwal, L=Jaipur, ST=Rajasthan, C=IN"
-          ls -la my-upload-key.jks
+          ls -la "$KEYSTORE_PATH"
 
       - name: Build Release APK Signed with Test Keystore
         env:
+          KEYSTORE_PATH: ${{ github.workspace }}/ci-upload-key.jks
           STORE_PASSWORD: testpassword123
           KEY_PASSWORD: testpassword123
         run: |
