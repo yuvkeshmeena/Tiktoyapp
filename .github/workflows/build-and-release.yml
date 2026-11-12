@@ -1,0 +1,125 @@
+name: Build & Release Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    name: Build & Sign APK, Create Release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Make Gradlew Executable
+        run: chmod +x gradlew
+
+      - name: Generate Test Keystore
+        run: |
+          echo "Generating test keystore for signing..."
+          keytool -genkeypair -v \
+            -keystore my-upload-key.jks \
+            -alias upload \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass testpassword123 \
+            -keypass testpassword123 \
+            -dname "CN=Suman Jorwal, OU=Mobile, O=SumanJorwal, L=Jaipur, S=Rajasthan, C=IN"
+          ls -la my-upload-key.jks
+
+      - name: Build Release APK Signed with Test Keystore
+        env:
+          STORE_PASSWORD: testpassword123
+          KEY_PASSWORD: testpassword123
+        run: |
+          ./gradlew :app:assembleRelease --stacktrace
+
+      - name: Prepare APK Artifacts
+        id: prepare_apks
+        run: |
+          RELEASE_DIR="app/build/outputs/apk/release"
+          if [ -f "$RELEASE_DIR/app-release.apk" ]; then
+            APK_SRC="$RELEASE_DIR/app-release.apk"
+          else
+            APK_SRC=$(find "$RELEASE_DIR" -name "*.apk" | head -n 1)
+          fi
+
+          if [ -z "$APK_SRC" ]; then
+            echo "Error: No APK found in $RELEASE_DIR"
+            exit 1
+          fi
+
+          echo "Found source APK at: $APK_SRC"
+          
+          # Determine release tag
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+          else
+            TAG_NAME="v1.0.${{ github.run_number }}"
+          fi
+          
+          mkdir -p release-apks
+          cp "$APK_SRC" "release-apks/SumanJorwal-${TAG_NAME}.apk"
+          cp "$APK_SRC" "release-apks/SumanJorwal-latest.apk"
+          
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "apk_path=release-apks/SumanJorwal-${TAG_NAME}.apk" >> $GITHUB_OUTPUT
+          echo "latest_apk_path=release-apks/SumanJorwal-latest.apk" >> $GITHUB_OUTPUT
+
+      - name: Upload APK Artifact to GitHub Actions
+        uses: actions/upload-artifact@v4
+        with:
+          name: SumanJorwal-APK-${{ steps.prepare_apks.outputs.tag_name }}
+          path: release-apks/*.apk
+          retention-days: 30
+
+      - name: Create or Update GitHub Release with Tag
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+        with:
+          tag_name: ${{ steps.prepare_apks.outputs.tag_name }}
+          name: "Suman Jorwal App ${{ steps.prepare_apks.outputs.tag_name }}"
+          body: |
+            ## Suman Jorwal Android Application
+            
+            🎉 **Release**: `${{ steps.prepare_apks.outputs.tag_name }}`
+            🌐 **Target Website**: [https://sumanjorwal.pages.dev/](https://sumanjorwal.pages.dev/)
+            🔑 **Signature**: Signed with test keystore (Ready to install)
+            📦 **Commit**: `${{ github.sha }}`
+            
+            ### Downloads:
+            - **Latest APK**: `SumanJorwal-latest.apk`
+            - **Versioned APK**: `SumanJorwal-${{ steps.prepare_apks.outputs.tag_name }}.apk`
+            
+            ### Installation:
+            1. Download the `.apk` file to your Android device.
+            2. Open and tap **Install** (allow installation from browser/file manager if prompted).
+            3. Enjoy the clean, full-screen experience of your website.
+          draft: false
+          prerelease: false
+          files: |
+            release-apks/*.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
